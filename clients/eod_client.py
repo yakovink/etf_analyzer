@@ -96,8 +96,12 @@ class EODClient:
                 return None
 
     def __init__(self):
+<<<<<<< HEAD
         with open('data/eod_api_code.txt', 'r') as f:
             self.api_token = f.read().strip()
+=======
+        self.api_token = 'API'
+>>>>>>> 1b57b0428d61f64dc2a4053e0a2af7251741e6d9
         self.base_url = 'https://eodhd.com/api'
         self.api = eodhd.APIClient(self.api_token)
         self.db = DatabaseManager()
