@@ -96,7 +96,7 @@ class EODClient:
                 return None
 
     def __init__(self):
-        self.api_token = '6958f03fb58382.16085772'
+        self.api_token = 'API'
         self.base_url = 'https://eodhd.com/api'
         self.api = eodhd.APIClient(self.api_token)
         self.db = DatabaseManager()
