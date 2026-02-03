@@ -1,0 +1,8 @@
+torch>=2.0.0
+numpy
+pandas
+requests
+scikit-learn
+beautifulsoup4
+openpyxl
+eodhd
