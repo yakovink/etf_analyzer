@@ -4,12 +4,12 @@ import torch.optim as optim
 
 class MacroLSTM(nn.Module):
     def __init__(self, 
-                 n_isos, n_regions, n_incomes, 
-                 n_continuous, 
-                 hidden_size=128, 
-                 num_layers=2, 
-                 dropout=0.2,
-                 lr=0.001, device='cpu'):
+                 n_isos: int, n_regions: int, n_incomes: int, 
+                 n_continuous: int, 
+                 hidden_size: int = 128, 
+                 num_layers: int = 2, 
+                 dropout: float = 0.2,
+                 lr: float = 0.001, device: str = 'cpu'):
         """
         LSTM-Bidirectional LSTM model for Macro Analysis.
         """
@@ -53,7 +53,7 @@ class MacroLSTM(nn.Module):
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         
-    def forward(self, iso, region, income, continuous_data):
+    def forward(self, iso: torch.Tensor, region: torch.Tensor, income: torch.Tensor, continuous_data: torch.Tensor):
         """
         iso: (Batch, Seq)
         region: (Batch, Seq)
@@ -87,7 +87,7 @@ class MacroLSTM(nn.Module):
         
         return pred
 
-    def backward_step(self, loss):
+    def backward_step(self, loss: torch.Tensor):
         """
         Executes the backward pass and optimizer step.
         """
@@ -95,7 +95,7 @@ class MacroLSTM(nn.Module):
         loss.backward()
         self.optimizer.step()
 
-    def fit(self, x_iso, x_reg, x_inc, x_cont, epochs=10):
+    def fit(self, x_iso: torch.Tensor, x_reg: torch.Tensor, x_inc: torch.Tensor, x_cont: torch.Tensor, epochs=10):
         """
         Trains the model to reconstruct the input.
         """

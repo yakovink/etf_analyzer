@@ -26,7 +26,7 @@ class MacroTimeSeriesPreprocessor:
                  corr_threshold: float = 0.95,
                  pca_variance: float = 0.99):
         """
-        Generic Preprocessor for Time Series / Sequence Data.
+        Generic Preprocessor for Macro Time Series / Sequence Data.
         
         Args:
             continuous_cols: List of numerical feature column names.

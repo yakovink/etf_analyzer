@@ -137,3 +137,88 @@ This document outlines the 6 distinct pipelines required to populate the ETF Ana
     * Aggregate Stock Analysis based on `holdings` weights.
     * Calculate `weighted_prob`, `coverage_pct`.
     * Store Betas and final scores.
+
+---
+
+## Pipeline 7: Business Intelligence (BI)
+**Goal:** Load gold data and create visualizations/statistical tests to validate hypotheses.
+
+### Output Artifacts
+- **Visualizations:** PNG charts saved to `data/` folder
+- **Statistical Reports:** Console output with hypothesis test results
+
+### Hypotheses Tested
+
+#### 1. Central Bank Rate Impact (NEW)
+**Hypothesis:** High central bank rates significantly increase the probability of cycles being successful and ending with market increase.
+
+**Tests:**
+- Chi-square test for independence (rate category vs cycle success)
+- T-test for yield differences (high rate vs low rate environments)
+- Correlation analysis (central bank rate vs total cycle yield)
+
+**Outputs:**
+- Success rates by rate category
+- Yield distributions
+- Scatter plots with trend lines
+- Statistical significance (p-values)
+
+#### 2. PE Derivatives Predict Cycles
+**Hypothesis:** 2nd derivative of PE ratio signals cycle turning points (peaks/troughs).
+
+**Tests:**
+- ANOVA test (2nd derivative across cycle phases)
+- Mean derivative analysis by phase
+
+**Outputs:**
+- Derivatives by cycle phase (Start/Bull/Peak/Bear/End)
+- Distribution analysis
+- Time series examples
+
+#### 3. Growth Model Validation
+**Hypothesis:** P/B Premium = Expected Growth Rate (Premium - 1 ≈ Marginal Book Value).
+
+**Tests:**
+- Linear regression (premium growth vs actual growth)
+- Correlation analysis
+- Error distribution analysis
+
+**Outputs:**
+- Scatter plots (expected vs actual)
+- Model accuracy distribution (Excellent/Good/Fair/Poor)
+- Residual plots
+
+#### 4. Liquidity Leads Cycles
+**Hypothesis:** Macro liquidity scores predict future PE changes by 2-4 quarters.
+
+**Tests:**
+- Lagged correlation analysis (1-4 quarters)
+- Time series analysis
+- Quartile analysis (liquidity level vs future returns)
+
+**Outputs:**
+- Predictive power by time lag
+- Best lag identification
+- Country-specific time series
+- Liquidity quartile performance
+
+### Execution Logic
+1. **Load Gold Data:** Fetch all calculated and analysis tables from database
+2. **Run Statistical Tests:** Execute hypothesis-specific tests with proper statistical methods
+3. **Generate Visualizations:** Create comprehensive 2x2 subplot charts for each hypothesis
+4. **Executive Summary:** Consolidate findings into actionable summary table
+
+### Usage
+```python
+from processing.pipeline7_bi import BIAnalyzer
+
+bi = BIAnalyzer()
+bi.run()  # Run all hypothesis tests
+
+# Or run individual tests:
+bi.load_gold_data()
+bi.test_hypothesis_central_bank_rate()
+bi.test_hypothesis_pe_derivatives_predict_cycles()
+bi.test_hypothesis_growth_model()
+bi.test_hypothesis_liquidity_leads_cycles()
+```

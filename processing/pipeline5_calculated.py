@@ -709,12 +709,23 @@ class CalculatedLoader:
         self.conn.commit()
         print("Scheme 5 Tables initialized.")
 
-    def run(self):
-        print("--- Pipeline 5: Calculated Data ---")
-        self.create_tables()
-        self.calc_fundemental_data()
-        self.calc_macro_data()
-        print("Pipeline 5 Complete.")
+    def check_integrity(self):
+        for table in ['stocks_calculated', 'cycles', 'macro_calculated']:
+            try:
+                count = self.cursor.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+                print(f"{table}: {count} rows")
+            except Exception as e:
+                print(f"Error checking {table}: {e}")
+    
+
+def run():
+    loader = CalculatedLoader()
+    print("--- Pipeline 5: Calculated Data ---")
+    loader.create_tables()
+    loader.calc_fundemental_data()
+    loader.calc_macro_data()
+    loader.check_integrity()
+    print("Pipeline 5 Complete.")
 
 
 
