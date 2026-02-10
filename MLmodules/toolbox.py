@@ -1,6 +1,4 @@
-import torch
-import pandas as pd
-import numpy as np
+from global_import import torch, pd, np
 
 def series_to_tensor(series: pd.Series, dtype=torch.float32, device='cpu') -> torch.Tensor:
     """

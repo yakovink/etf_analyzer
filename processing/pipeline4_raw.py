@@ -9,18 +9,20 @@ from global_import import pd, json, datetime, time, pycountry, np, os
 from clients.datareader_client import DatareaderClient
 from clients.database_manager import DatabaseManager
 from clients.eod_client import EODClient
+from clients.oecd_client import OECDClient
 
-CONFIG_PATH = os.path.join('data', 'infastructre', 'macro_indicators.json')
+CONFIG_PATH = os.path.join('data', 'infrastructure', 'macro_indicators.json')
 
 class RawLoader:
     def __init__(self):
         self.db = DatabaseManager()
         self.client = DatareaderClient()
         self.eod_client = EODClient()
+        self.oecd_client = OECDClient()
         self.conn = self.db.get_connection()
         self.cursor = self.conn.cursor()
-        self.config = self._load_config()
-        self.target_years = range(1995, 2025)
+        self.config : dict = self._load_config()
+        self.target_years = range(1995, 2026)
         # optimize: cache iso map
         try:
             self._iso_map_df = self.get_target_countries()
@@ -31,6 +33,195 @@ class RawLoader:
     def _load_config(self):
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)['macro_indicators']
+        
+
+    def get_oecd_data(self, countries_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fetches OECD indicators using SDMX 3.0 API via OECDClient.
+        Looks for indicators with 'oecd_sdmx_params' key in config.
+        """
+        # Extract OECD indicators from config
+        oecd_indicators = {k: v for k, v in self.config.items() 
+                          if v.get('oecd_sdmx_params')}
+        
+        if not oecd_indicators:
+            print("No OECD indicators configured.")
+            return pd.DataFrame()
+        
+        print(f"Fetching {len(oecd_indicators)} OECD indicators...")
+        
+        all_oecd_data = []
+        
+        # Fetch each indicator
+        for key, meta in oecd_indicators.items():
+            try:
+                print(f"  Fetching OECD indicator: {key}")
+                
+                oecd_params = meta.get('oecd_sdmx_params', {})
+                
+                # Use OECDClient to fetch data
+                oecd_data = self.oecd_client.fetch_indicator(
+                    params=oecd_params,
+                    start_year=min(self.target_years),
+                    end_year=max(self.target_years)
+                )
+                
+                if oecd_data is not None and not oecd_data.empty:
+                    # Rename Value column to indicator name
+                    oecd_data = oecd_data.rename(columns={'Value': key})
+                    
+                    all_oecd_data.append(oecd_data)
+                    print(f"    ✓ Fetched {len(oecd_data)} records across {oecd_data['ISO3'].nunique()} countries")
+                else:
+                    print(f"    ✗ No data returned for {key}")
+                    
+            except Exception as e:
+                print(f"    ✗ Error fetching OECD {key}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Merge all OECD indicators
+        if not all_oecd_data:
+            print("  No OECD data fetched.")
+            return pd.DataFrame()
+        
+        # Start with first indicator
+        merged = all_oecd_data[0]
+        
+        # Merge rest on ISO3 + Year
+        for oecd_df in all_oecd_data[1:]:
+            merged = pd.merge(merged, oecd_df, on=['ISO3', 'Year'], how='outer')
+        
+        # Convert ISO3 to ISO2 for consistency
+        iso3_to_iso2 = dict(zip(countries_df['ISO3'], countries_df['ISO']))
+        merged['ISO'] = merged['ISO3'].map(iso3_to_iso2)
+        
+        # Keep only known countries
+        merged = merged.dropna(subset=['ISO'])
+        merged = merged.drop(columns=['ISO3'])
+        
+        print(f"OECD fetch complete: {len(merged)} country-year records, {len(merged.columns)-2} indicators")
+        print(f"  Coverage: {merged['Year'].min()}-{merged['Year'].max()}")
+        print(f"  Countries: {merged['ISO'].nunique()}")
+        
+        return merged
+        
+        # LEGACY CODE (non-functional):
+        # Extract OECD indicators from config
+        oecd_indicators = {k: v for k, v in self.config.items() 
+                        if v.get('oecd_params') and v.get('source_priority', [''])[0] in ['OECD_DATAREADER', 'OECD']}
+        
+        if not oecd_indicators:
+            return pd.DataFrame()
+        
+        print(f"Fetching {len(oecd_indicators)} OECD indicators for ALL available countries...")
+        
+        all_oecd_data = []
+        
+        # Fetch each indicator separately (fetches ALL countries, full history)
+        for key, meta in oecd_indicators.items():
+            try:
+                print(f"  Fetching OECD indicator: {key}")
+                
+                oecd_params = meta.get('oecd_params', {})
+                dataset_code = oecd_params.get('dataset_code')
+                slice_keys = oecd_params.get('slice_keys', [])
+                slice_levels = oecd_params.get('slice_levels', [])
+                
+                if not dataset_code or not slice_keys:
+                    print(f"    ✗ Missing OECD params for {key}")
+                    continue
+                
+                # Use DatareaderClient's OECD method WITHOUT country filter
+                # This fetches ALL countries from 1960 onwards
+                oecd_data = self.client.get_oecd_indicator(
+                    dataset_code=dataset_code,
+                    slice_keys=slice_keys,
+                    slice_levels=slice_levels,
+                    countries=None,  # Fetch ALL countries
+                    start=datetime.datetime(1960, 1, 1),  # Max history
+                    end=datetime.datetime.now()
+                )
+                
+                if oecd_data is not None and not oecd_data.empty:
+                    # Ensure required columns exist
+                    if 'LOCATION' not in oecd_data.columns or 'TIME' not in oecd_data.columns or 'Value' not in oecd_data.columns:
+                        print(f"    ✗ Missing required columns for {key}: {oecd_data.columns.tolist()}")
+                        continue
+                    
+                    # Convert TIME to Year
+                    oecd_data['TIME'] = oecd_data['TIME'].astype(str)
+                    
+                    # Handle different time formats (YYYY, YYYY-Qn, YYYY-MM)
+                    def extract_year(time_str):
+                        try:
+                            if '-' in str(time_str):
+                                return int(str(time_str).split('-')[0])
+                            return int(str(time_str)[:4])
+                        except:
+                            return None
+                    
+                    oecd_data['Year'] = oecd_data['TIME'].apply(extract_year)
+                    oecd_data = oecd_data.dropna(subset=['Year'])
+                    oecd_data['Year'] = oecd_data['Year'].astype(int)
+                    
+                    # Rename columns
+                    oecd_data = oecd_data.rename(columns={
+                        'LOCATION': 'ISO3',
+                        'Value': key
+                    })
+                    
+                    # Group by ISO3 and Year (aggregate if multiple observations per year)
+                    # For annual data (A frequency), this should be 1:1, but for quarterly/monthly we take the mean
+                    oecd_data = oecd_data.groupby(['ISO3', 'Year'])[key].mean().reset_index()
+                    
+                    all_oecd_data.append(oecd_data)
+                    print(f"    ✓ Fetched {len(oecd_data)} records across {oecd_data['ISO3'].nunique()} countries")
+                else:
+                    print(f"    ✗ No data returned for {key}")
+                    
+            except Exception as e:
+                print(f"    ✗ Error fetching OECD {key}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Merge all OECD indicators
+        if not all_oecd_data:
+            print("  No OECD data fetched.")
+            return pd.DataFrame()
+        
+        # Start with first indicator
+        merged = all_oecd_data[0]
+        
+        # Merge rest on ISO3 + Year
+        for oecd_df in all_oecd_data[1:]:
+            merged = pd.merge(merged, oecd_df, on=['ISO3', 'Year'], how='outer')
+        
+        # Convert ISO3 to ISO2 for consistency with other data
+        # Only keep countries that exist in our countries table
+        iso3_to_iso2 = dict(zip(countries_df['ISO3'], countries_df['ISO']))
+        merged['ISO'] = merged['ISO3'].map(iso3_to_iso2)
+        
+        # Keep ALL countries (even those not in our exchanges)
+        # This allows future expansion without re-fetching OECD data
+        # Pipeline will filter to relevant countries later
+        print(f"  Mapped {merged['ISO'].notna().sum()} / {len(merged)} records to known countries")
+        
+        # Drop ISO3 column (keep ISO2)
+        merged = merged.drop(columns=['ISO3'])
+        
+        # Filter to only countries we have in the database (optional - comment out to keep all)
+        merged = merged.dropna(subset=['ISO'])
+        
+        print(f"OECD fetch complete: {len(merged)} country-year records, {len(merged.columns)-2} indicators")
+        print(f"  Coverage: {merged['Year'].min()}-{merged['Year'].max()}")
+        print(f"  Countries: {merged['ISO'].nunique()}")
+        
+        return merged
+
+
 
     def create_tables(self):
         """Creates/Resets tables for Scheme 4: Raw."""
@@ -84,6 +275,89 @@ class RawLoader:
             # print(f"Warning: Could not fetch target countries ({e})") 
             return pd.DataFrame(columns=['ISO', 'ISO3'])
 
+    def fetch_eod_macro_data(self, countries_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fetches EOD macro indicators (e.g., national_income_usd, national_savings_usd).
+        Uses EODClient.get_macro_indicator() with eod_macro_code from config.
+        """
+        # Extract EOD macro indicators from config
+        eod_indicators = {k: v for k, v in self.config.items() 
+                         if v.get('eod_macro_code')}
+        
+        if not eod_indicators:
+            print("No EOD macro indicators configured.")
+            return pd.DataFrame()
+        
+        print(f"Fetching {len(eod_indicators)} EOD macro indicators...")
+        
+        all_eod_data = []
+        
+        # Define function to fetch data for a single country (enables apply pattern)
+        def _fetch_country_eod(country_row):
+            iso2 = country_row['ISO']
+            country_data = []
+            
+            if not iso2:
+                return country_data
+            
+            # Fetch each indicator for this country
+            for key, meta in eod_indicators.items():
+                try:
+                    eod_code = meta.get('eod_macro_code')
+                    
+                    # Use EODClient to fetch macro data
+                    eod_data = self.eod_client.get_macro_indicator(
+                        country_code=iso2,
+                        indicators=[eod_code]
+                    )
+                    
+                    if eod_data is not None and not eod_data.empty:
+                        # EOD returns quarterly data, need to aggregate to annual
+                        if 'Date' in eod_data.columns:
+                            eod_data['Year'] = pd.to_datetime(eod_data['Date']).dt.year
+                            
+                            # Aggregate by year (mean for flow variables)
+                            annual_data = eod_data.groupby('Year').agg({
+                                eod_code: 'mean'  # Take annual average
+                            }).reset_index()
+                            
+                            annual_data['ISO'] = iso2
+                            annual_data = annual_data.rename(columns={eod_code: key})
+                            
+                            # Filter to target years
+                            annual_data = annual_data[annual_data['Year'].isin(self.target_years)]
+                            
+                            country_data.append(annual_data)
+                            
+                except Exception as e:
+                    # Silent fail for individual indicators (common for missing data)
+                    continue
+            
+            return country_data
+        
+        # Apply function across countries (serial execution for API calls)
+        eod_data_lists = countries_df.apply(_fetch_country_eod, axis=1)
+        
+        # Flatten the list of lists
+        all_eod_data = [df for sublist in eod_data_lists for df in sublist]
+        
+        # Merge all EOD data
+        if not all_eod_data:
+            print("  No EOD macro data fetched.")
+            return pd.DataFrame()
+        
+        # Concatenate and pivot
+        merged = pd.concat(all_eod_data, ignore_index=True)
+        
+        # Group by ISO + Year and aggregate (in case of duplicates)
+        merged = merged.groupby(['ISO', 'Year'], as_index=False).first()
+        
+        print(f"EOD macro fetch complete: {len(merged)} country-year records")
+        print(f"  Coverage: {merged['Year'].min()}-{merged['Year'].max()}")
+        print(f"  Countries: {merged['ISO'].nunique()}")
+        
+        return merged
+
     def fetch_wb_data(self, countries_df):
         """Fetches all indicators from WB for target countries."""
         key_to_wb = {k: v['wb_code'] for k, v in self.config.items() if v.get('wb_code')}
@@ -113,7 +387,14 @@ class RawLoader:
             return pd.DataFrame()
 
     def process_initial_data(self, countries_df):
+        """
+        Fetch and merge macro indicators from multiple sources.
+        Order: WB (primary) → OECD → EOD macro → skeleton
+        """
+        # Fetch from all sources
         wb_data = self.fetch_wb_data(countries_df)
+        oecd_data = self.get_oecd_data(countries_df)
+        eod_macro_data = self.fetch_eod_macro_data(countries_df)
         
         isos = countries_df['ISO'].unique() if not countries_df.empty else []
         years = list(self.target_years)
@@ -121,13 +402,39 @@ class RawLoader:
         if len(isos) == 0:
             return pd.DataFrame()
 
+        # Create skeleton (all country-year combinations)
         skeleton = pd.MultiIndex.from_product([isos, years], names=['ISO', 'Year']).to_frame(index=False)
         
-        if wb_data.empty:
-             return skeleton
-             
-        # Merge WB data onto skeleton
-        return pd.merge(skeleton, wb_data, on=['ISO', 'Year'], how='left')
+        # Merge in order: skeleton → WB → OECD → EOD
+        result = skeleton.copy()
+        
+        if not wb_data.empty:
+            result = pd.merge(result, wb_data, on=['ISO', 'Year'], how='left')
+            print(f"  Merged WB data: {len([c for c in wb_data.columns if c not in ['ISO', 'Year']])} indicators")
+        
+        if not oecd_data.empty:
+            result = pd.merge(result, oecd_data, on=['ISO', 'Year'], how='left', suffixes=('', '_oecd'))
+            # OECD data should overwrite WB where both exist (OECD is more specific for S1/S2)
+            for col in oecd_data.columns:
+                if col not in ['ISO', 'Year']:
+                    oecd_col = f"{col}_oecd" if f"{col}_oecd" in result.columns else col
+                    if oecd_col in result.columns and col in result.columns:
+                        result[col] = result[oecd_col].combine_first(result[col])
+                        result.drop(columns=[oecd_col], inplace=True)
+            print(f"  Merged OECD data: {len([c for c in oecd_data.columns if c not in ['ISO', 'Year']])} indicators")
+        
+        if not eod_macro_data.empty:
+            result = pd.merge(result, eod_macro_data, on=['ISO', 'Year'], how='left', suffixes=('', '_eod'))
+            # EOD macro should fill gaps, not overwrite existing WB data
+            for col in eod_macro_data.columns:
+                if col not in ['ISO', 'Year']:
+                    eod_col = f"{col}_eod" if f"{col}_eod" in result.columns else col
+                    if eod_col in result.columns and col in result.columns:
+                        result[col] = result[col].combine_first(result[eod_col])
+                        result.drop(columns=[eod_col], inplace=True)
+            print(f"  Merged EOD macro data: {len([c for c in eod_macro_data.columns if c not in ['ISO', 'Year']])} indicators")
+        
+        return result
 
     def patch_missing_data(self, df):
         """Patches gaps with FRED and EOD."""
@@ -143,8 +450,16 @@ class RawLoader:
         iso3 = self._iso_map.get(iso)
         if not iso3: return group 
 
-        # 1. FRED Patching
+        # 1. FRED Patching (skip indicators already loaded from OECD/EOD macro)
         for key, meta in self.config.items():
+            # Skip OECD indicators (fetched directly from OECD SDMX API)
+            if meta.get('oecd_sdmx_params'):
+                continue
+            
+            # Skip EOD macro indicators (fetched directly from EOD)
+            if meta.get('eod_macro_code'):
+                continue
+            
             if not group[key].isna().any(): continue
             
             patches = meta.get('fred_patches', {})
@@ -161,8 +476,12 @@ class RawLoader:
                             group[key] = group[key].fillna(group['Year'].map(annual))
                     except Exception: pass
         
-        # 2. EOD Patching
+        # 2. EOD Patching (ticker-based, not macro)
         for key, meta in self.config.items():
+            # Skip EOD macro indicators (already loaded)
+            if meta.get('eod_macro_code'):
+                continue
+                
             if not group[key].isna().any(): continue
             eod_code = meta.get('eod_code')
             ticker_pattern = meta.get('eod_ticker_pattern')

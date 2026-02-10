@@ -1,12 +1,4 @@
-import pandas as pd
-import numpy as np
-import torch
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import train_test_split
-from sklearn.decomposition import PCA
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_selection import VarianceThreshold
-from typing import List, Union, Dict, Tuple, Optional
+from global_import import pd, np, torch, StandardScaler, LabelEncoder, train_test_split, PCA, LogisticRegression, VarianceThreshold, List, Union, Dict, Tuple, Optional
 
 # Attempt relative import, fallback to absolute
 try:

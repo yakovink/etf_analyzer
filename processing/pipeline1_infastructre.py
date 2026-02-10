@@ -116,7 +116,7 @@ class InfraLoader:
         # לבסוף נגדיר מטבע ייחודי עבור כל מדינה לפי המטבע של הבורסאות שלה
         currency_map = self.database_manager.fetch_df('''
             SELECT DISTINCT ISO, Currency from exchanges where ISO!=''
-                                                      ''').set_index('ISO')['Currency']
+                                                      ''').set_index('ISO')['Currency'].to_dict()
         df['currency'] = df['ISO'].map(currency_map)
 
 

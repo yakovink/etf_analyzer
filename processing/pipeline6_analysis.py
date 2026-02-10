@@ -5,11 +5,10 @@ Pipeline 6: AI Analysis
 - Task: Fit macro indicators and predict future trends/scores.
 """
 
-from global_import import pd, np, Literal, Tuple
+from global_import import pd, np, Literal, Tuple, torch
 from clients.database_manager import DatabaseManager
 from MLmodules.macro_model import MacroLSTM
 from MLmodules.preprocessing import MacroTimeSeriesPreprocessor
-import torch
 import torch.nn as nn
 import torch.optim as optim
 

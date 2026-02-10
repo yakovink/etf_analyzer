@@ -389,75 +389,37 @@ class CalculatedLoader:
             # ------------------------------------------------------------------
             # Cycle Mapping to Stocks (to add CycleID to stocks_calculated)
             # ------------------------------------------------------------------
-            # Create a lookup mapping: (ISIN, QuarterID) -> CycleID
-            cycle_map = {}
-            for _, row in df_cycles.iterrows():
-                isin = row['ISIN']
-                cid = row['CycleID']
-                sq = row['StartedQuarter']
-                eq = row['EndQuarter']
-                
-                # We need all quarters between Started and End (inclusive)
-                # Since QuarterID is sequential integer (e.g. 20231, 20232), we can iterate? 
-                # No, standard QuarterIDs like 20234 -> 20241 have gaps (6).
-                # We need to rely on the 'quarters' table ideally, but here we can just map the specific points or use range if numeric is consistent-ish (it breaks at year boundary).
-                # Better approach: Filter the DF for this ISIN and assign CycleID where QuarterID in range.
-                pass
-            
-            # Vectorized Cycle Assignment:
-            # We must map CycleID back to fundemental_micro_df
-            # Since an ISIN can have multiple cycles, but they shouldn't overlap in time (per logic),
-            # we can join or apply.
-            # Efficient way:
+            # Vectorized Cycle Assignment using merge instead of iterrows
             fundemental_micro_df['CycleID'] = None
             
-            # Loop over cycles (slow but safe for range logic) or use interval index?
-            # Or since we processed by ISIN, we can maintain the relationship.
-            # Let's use the fact that cycles are non-overlapping.
-            # We can create a mapping DataFrame "IsinQuarterCycle" and merge.
-            
-            cycle_mapping_list = []
-            
-            # Get all quarters to know the sequence
-            all_q = sorted(fundemental_micro_df['QuarterID'].unique())
-            
-            for _, row in df_cycles.iterrows():
-                isin = row['ISIN']
-                cid = row['CycleID']
-                s = row['StartedQuarter']
-                e = row['EndQuarter']
+            # Build mapping DataFrame directly (no iterrows needed)
+            if not df_cycles.empty:
+                # Create copy with End quarter handling for active cycles
+                map_df = df_cycles[['ISIN', 'CycleID', 'StartedQuarter', 'EndQuarter']].copy()
+                map_df.loc[map_df['EndQuarter'].isna(), 'EndQuarter'] = 999999  # Active cycles
+                map_df = map_df.rename(columns={'StartedQuarter': 'Start', 'EndQuarter': 'End'})
                 
-                if pd.isna(e): e = 999999 # Active cycle
+                # Merge on ISIN to get all possible ISIN-Quarter-Cycle combinations
+                merged_map = pd.merge(
+                    fundemental_micro_df[['ISIN', 'QuarterID']].reset_index(drop=True), 
+                    map_df, 
+                    on='ISIN', 
+                    how='left'
+                )
                 
-                # This logic assumes simple integer comparison works for QuarterID
-                # 20234 < 20241 is True. So yes.
-                cycle_mapping_list.append({
-                    'ISIN': isin,
-                    'Start': s,
-                    'End': e,
-                    'CycleID': cid
-                })
-            
-            # This is still O(N_cycles * N_rows) if not careful.
-            # Optimization: merge on ISIN, then filter.
-            if cycle_mapping_list:
-                map_df = pd.DataFrame(cycle_mapping_list)
-                # Map to micro df
-                # Inner join on ISIN, then filter rows where Start <= QuarterID <= End
-                merged_map = pd.merge(fundemental_micro_df[['ISIN', 'QuarterID']].reset_index(drop=True), map_df, on='ISIN', how='left')
-                
-                # Boolean mask
+                # Boolean mask: quarters within cycle range
                 mask = (merged_map['QuarterID'] >= merged_map['Start']) & (merged_map['QuarterID'] <= merged_map['End'])
                 
-                # Get valid matches
+                # Get valid mappings and drop duplicates
                 valid_mappings = merged_map[mask][['ISIN', 'QuarterID', 'CycleID']].drop_duplicates(subset=['ISIN', 'QuarterID'])
                 
                 # Merge back to main df
-                fundemental_micro_df = pd.merge(fundemental_micro_df, valid_mappings, on=['ISIN', 'QuarterID'], how='left')
+                fundemental_micro_df = pd.merge(fundemental_micro_df, valid_mappings, on=['ISIN', 'QuarterID'], how='left', suffixes=('_old', ''))
                 
-                # Fix duplicates from merge? (CycleID_x, CycleID_y if existed)
-                if 'CycleID_x' in fundemental_micro_df.columns:
-                     fundemental_micro_df['CycleID'] = fundemental_micro_df['CycleID_y'].fillna(fundemental_micro_df['CycleID_x'])
+                # Handle any existing CycleID column
+                if 'CycleID_old' in fundemental_micro_df.columns:
+                    fundemental_micro_df['CycleID'] = fundemental_micro_df['CycleID'].fillna(fundemental_micro_df['CycleID_old'])
+                    fundemental_micro_df = fundemental_micro_df.drop(columns=['CycleID_old'])
                      fundemental_micro_df.drop(columns=['CycleID_x', 'CycleID_y'], inplace=True)
             
             # Calculate Cycle Stats
